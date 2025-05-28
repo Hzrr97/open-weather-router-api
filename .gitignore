@@ -1,0 +1,162 @@
+# Dependencies
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+package-lock.json
+yarn.lock
+
+# Environment variables
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+.env.backup
+
+# Logs
+logs/
+*.log
+combined.log
+out.log
+error.log
+
+# Runtime data
+pids/
+*.pid
+*.seed
+*.pid.lock
+
+# Coverage directory used by tools like istanbul
+coverage/
+*.lcov
+
+# nyc test coverage
+.nyc_output
+
+# Dependency directories
+jspm_packages/
+
+# Optional npm cache directory
+.npm
+
+# Optional eslint cache
+.eslintcache
+
+# Output of 'npm pack'
+*.tgz
+
+# Yarn Integrity file
+.yarn-integrity
+
+# parcel-bundler cache (https://parceljs.org/)
+.cache
+.parcel-cache
+
+# next.js build output
+.next
+
+# nuxt.js build output
+.nuxt
+
+# vuepress build output
+.vuepress/dist
+
+# Serverless directories
+.serverless
+
+# FuseBox cache
+.fusebox/
+
+# DynamoDB Local files
+.dynamodb/
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Windows specific
+desktop.ini
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+*.tmp
+
+# PM2 files
+.pm2/
+ecosystem.config.js.backup
+
+# Docker
+.dockerignore
+*.dockerfile.backup
+
+# Build files
+dist/
+build/
+out/
+
+# Test files
+test-results/
+screenshots/
+
+# Backup files
+*.backup
+*.bak
+*.orig
+
+# Temporary files
+tmp/
+temp/
+
+# SSL certificates (if any)
+ssl/
+certs/
+*.pem
+*.key
+*.crt
+
+# Database files (if using local DB)
+*.db
+*.sqlite
+*.sqlite3
+
+# Cache files
+.cache/
+cache/
+
+# Monitoring and metrics
+metrics/
+monitoring/
+
+# Documentation build
+docs/build/
+
+# Config backups
+config/*.backup
+config/*.bak
+
+# API keys backup (extra security)
+*api*key*
+*secret*
+*token*
+
+# Jest
+jest.config.js.backup
+
+# ESLint
+.eslintrc.backup
+
+# Prettier
+.prettierrc.backup
+
+# Editor config
+.editorconfig.backup 
