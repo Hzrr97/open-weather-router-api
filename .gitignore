@@ -144,11 +144,6 @@ docs/build/
 config/*.backup
 config/*.bak
 
-# API keys backup (extra security)
-*api*key*
-*secret*
-*token*
-
 # Jest
 jest.config.js.backup
 
