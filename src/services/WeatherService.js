@@ -2,12 +2,7 @@
 
 const axios = require('axios');
 const NodeCache = require('node-cache');
-
-// 根据环境变量选择API密钥管理器
-const useClusterMode = process.env.ENABLE_CLUSTER_MODE !== 'false'; // 默认启用
-const ApiKeyManager = useClusterMode 
-  ? require('./ClusterApiKeyManager') 
-  : require('./ApiKeyManager');
+const ApiKeyManager = require('./ApiKeyManager');
 
 class WeatherService {
   constructor() {
@@ -28,9 +23,9 @@ class WeatherService {
       console.log('🚫 缓存已禁用');
     }
     
-    // 初始化API密钥管理器（支持集群模式）
+    // 初始化API密钥管理器（基于Redis）
     this.apiKeyManager = new ApiKeyManager();
-    this.isClusterMode = useClusterMode;
+    this.initializationPromise = this.initialize(); // 保存初始化Promise
     
     // 初始化HTTP客户端
     this.httpClient = axios.create({
@@ -80,7 +75,30 @@ class WeatherService {
     };
 
     // 记录启动模式
-    console.log(`🚀 WeatherService启动 - 模式: ${this.isClusterMode ? '集群' : '单进程'}`);
+    console.log(`🚀 WeatherService启动 - 模式: Redis`);
+  }
+
+  /**
+   * 异步初始化方法 - 等待Redis连接就绪
+   */
+  async initialize() {
+    try {
+      await this.apiKeyManager.redisReady;
+      console.log('🎯 WeatherService初始化完成 - Redis已就绪');
+      return true;
+    } catch (error) {
+      console.error('❌ WeatherService初始化失败:', error.message);
+      throw error;
+    }
+  }
+
+  /**
+   * 确保服务已初始化
+   */
+  async ensureInitialized() {
+    if (this.initializationPromise) {
+      await this.initializationPromise;
+    }
   }
 
   /**
@@ -91,6 +109,9 @@ class WeatherService {
     this.stats.totalRequests++;
     
     try {
+      // 确保服务已初始化
+      await this.ensureInitialized();
+      
       // 生成缓存键
       const cacheKey = this.generateCacheKey(params);
       
@@ -160,7 +181,6 @@ class WeatherService {
           this.cache.set(cacheKey, response.data);
           this.stats.cacheWrites++;
         }
-        
         // 直接返回API的原始响应数据
         return response.data;
         
@@ -172,7 +192,7 @@ class WeatherService {
           error: error.message,
           params: params,
           url: error.config?.url,
-          mode: this.isClusterMode ? 'cluster' : 'single'
+          mode: 'redis'
         });
         
         // 如果不是最后一次尝试，等待重试
@@ -241,6 +261,9 @@ class WeatherService {
    * 获取服务统计信息 - 支持集群模式
    */
   async getStats() {
+    // 确保服务已初始化
+    await this.ensureInitialized();
+    
     const uptime = Date.now() - this.stats.startTime;
     const cacheKeys = this.cache?.keys().length || 0;
     const cacheHitRate = this.stats.totalRequests > 0 
@@ -266,12 +289,12 @@ class WeatherService {
       apiKeys: apiKeyStats,
       pendingRequests: this.pendingRequests.size,
       remainingQuota: remainingQuota,
-      mode: this.isClusterMode ? 'cluster' : 'single',
+      mode: 'redis',
       cacheEnabled: this.cacheEnabled,
-      clusterStats: this.isClusterMode ? {
+      clusterStats: {
         redisConnected: this.apiKeyManager.redisConnected || false,
-        storageMode: apiKeyStats.mode || 'unknown'
-      } : null
+        storageMode: apiKeyStats.mode || 'redis'
+      }
     };
   }
 
@@ -279,6 +302,9 @@ class WeatherService {
    * 获取详细统计信息 - 支持集群模式
    */
   async getDetailedStats() {
+    // 确保服务已初始化
+    await this.ensureInitialized();
+    
     const basicStats = await this.getStats();
     const apiKeyStats = await this.apiKeyManager.getDetailedStats();
     
@@ -304,15 +330,12 @@ class WeatherService {
         maxResponseTime: basicStats.maxResponseTime,
         minResponseTime: basicStats.minResponseTime
       },
-      cluster: this.isClusterMode ? {
-        mode: 'cluster',
+      cluster: {
+        mode: 'redis',
         redisConnected: this.apiKeyManager.redisConnected || false,
-        storageMode: apiKeyStats.mode || 'local',
+        storageMode: apiKeyStats.mode || 'redis',
         processId: process.pid,
         instanceId: process.env.INSTANCE_ID || 'unknown'
-      } : {
-        mode: 'single',
-        processId: process.pid
       }
     };
   }
@@ -391,6 +414,9 @@ class WeatherService {
    */
   async healthCheck() {
     try {
+      // 确保服务已初始化
+      await this.ensureInitialized();
+      
       // 检查API密钥可用性（异步）
       const apiKeyHealth = await this.apiKeyManager.healthCheck();
       const availableKeys = apiKeyHealth.availableKeys || 0;
@@ -414,7 +440,7 @@ class WeatherService {
           apiKeys: availableKeys > 0,
           cache: this.cacheEnabled ? cacheHealth : 'disabled',
           pendingRequests: this.pendingRequests.size < 1000,
-          redis: this.isClusterMode ? (this.apiKeyManager.redisConnected || false) : 'N/A'
+          redis: this.apiKeyManager.redisConnected || false
         },
         availableKeys,
         cacheUsage: this.cacheEnabled 
@@ -422,14 +448,17 @@ class WeatherService {
           : 'disabled',
         cacheEnabled: this.cacheEnabled,
         uptime: Math.floor((Date.now() - this.stats.startTime) / 1000),
-        mode: this.isClusterMode ? 'cluster' : 'single',
-        cluster: this.isClusterMode ? apiKeyHealth : null
+        mode: 'redis',
+        cluster: {
+          redisConnected: this.apiKeyManager.redisConnected || false,
+          storageMode: 'redis'
+        }
       };
     } catch (error) {
       return {
         status: 'unhealthy',
         error: error.message,
-        mode: this.isClusterMode ? 'cluster' : 'single'
+        mode: 'redis'
       };
     }
   }

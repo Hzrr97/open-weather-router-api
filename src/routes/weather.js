@@ -23,6 +23,12 @@ const querySchema = Joi.object({
       'number.max': 'lon必须小于等于180',
       'any.required': 'lon参数是必需的'
     }),
+
+  appid: Joi.string().required()
+    .messages({
+      'string.base': 'appid必须是字符串',
+      'any.required': 'appid参数是必需的'
+    }),
     
   exclude: Joi.string().pattern(/^(current|minutely|hourly|daily|alerts)(,(current|minutely|hourly|daily|alerts))*$/)
     .messages({
@@ -66,6 +72,10 @@ async function weatherRoutes(fastify, options) {
           maximum: 180,
           description: '经度，范围 -180 到 180'
         },
+        appid: {
+          type: 'string',
+          description: '接口鉴权密钥'
+        },
         exclude: { 
           type: 'string',
           pattern: '^(current|minutely|hourly|daily|alerts)(,(current|minutely|hourly|daily|alerts))*$',
@@ -83,22 +93,23 @@ async function weatherRoutes(fastify, options) {
           description: '语言代码，如：en, zh_cn'
         }
       },
-      required: ['lat', 'lon']
+      required: ['lat', 'lon', 'appid']
     },
     response: {
+      // 移除200的严格schema限制，允许任意对象结构
       200: {
+        type: 'object'
+      },
+      400: {
         type: 'object',
         properties: {
           success: { type: 'boolean' },
-          data: { type: 'object' },
-          source: { type: 'string' },
+          error: { type: 'string' },
           timestamp: { type: 'string' },
-          responseTime: { type: 'number' },
-          apiKey: { type: 'string' },
-          attempt: { type: 'number' }
+          requestId: { type: 'string' }
         }
       },
-      400: {
+      401: {
         type: 'object',
         properties: {
           success: { type: 'boolean' },
@@ -130,7 +141,12 @@ async function weatherRoutes(fastify, options) {
 
   // 主要API路由 - 获取天气数据
   fastify.get('/onecall', {
-    schema: onecallSchema,
+    schema: {
+      tags: ['weather'],
+      summary: '获取天气数据',
+      description: '获取指定位置的详细天气信息，包括当前天气、分钟级、小时级、日级预报等',
+      querystring: onecallSchema.querystring,
+    },
     preHandler: async (request, reply) => {
       // 请求预处理 - 记录请求信息
       request.log.info({
@@ -143,18 +159,51 @@ async function weatherRoutes(fastify, options) {
     const startTime = Date.now();
     
     try {
-      // 直接获取天气数据，不进行参数验证
-      const result = await weatherService.getWeatherData(request.query);
+      // 验证appid参数
+      const { appid, ...weatherParams } = request.query;
+      const expectedAppId = process.env.APP_ID_KEY;
+      
+      if (!expectedAppId) {
+        return reply.status(500).send({
+          success: false,
+          error: '服务器配置错误：缺少APP_ID_KEY环境变量',
+          timestamp: new Date().toISOString(),
+          requestId: request.id
+        });
+      }
+      
+      if (appid !== expectedAppId) {
+        return reply.status(401).send({
+          success: false,
+          error: '无效的appid参数',
+          timestamp: new Date().toISOString(),
+          requestId: request.id
+        });
+      }
+      
+      // 获取天气数据，传递除appid外的其他参数
+      const result = await weatherService.getWeatherData(weatherParams);
       
       // 设置响应时间头
       reply.header('X-Response-Time', `${Date.now() - startTime}ms`);
       
       // 记录成功日志
       request.log.info({
-        responseTime: Date.now() - startTime
+        responseTime: Date.now() - startTime,
+        hasData: !!result
       }, 'Weather API request completed successfully');
       
-      // 直接返回API的原始响应
+      // 确保返回有效的数据
+      if (!result) {
+        return reply.status(500).send({
+          success: false,
+          error: '无法获取天气数据',
+          timestamp: new Date().toISOString(),
+          requestId: request.id
+        });
+      }
+      
+      // 直接返回原始数据
       return result;
       
     } catch (error) {
@@ -193,15 +242,9 @@ async function weatherRoutes(fastify, options) {
   // 清空缓存接口 (管理功能)
   fastify.delete('/cache', {
     schema: {
-      response: {
-        200: {
-          type: 'object',
-          properties: {
-            success: { type: 'boolean' },
-            message: { type: 'string' }
-          }
-        }
-      }
+      tags: ['cache'],
+      summary: '清空缓存',
+      description: '清空所有天气数据缓存'
     }
   }, async (request, reply) => {
     try {
@@ -223,6 +266,9 @@ async function weatherRoutes(fastify, options) {
   // 缓存预热接口 (管理功能)
   fastify.post('/cache/warmup', {
     schema: {
+      tags: ['cache'],
+      summary: '缓存预热',
+      description: '为指定位置列表预热缓存数据',
       body: {
         type: 'object',
         properties: {
@@ -241,16 +287,6 @@ async function weatherRoutes(fastify, options) {
           }
         },
         required: ['locations']
-      },
-      response: {
-        200: {
-          type: 'object',
-          properties: {
-            success: { type: 'boolean' },
-            message: { type: 'string' },
-            results: { type: 'array' }
-          }
-        }
       }
     }
   }, async (request, reply) => {
@@ -292,15 +328,9 @@ async function weatherRoutes(fastify, options) {
   // 获取缓存信息
   fastify.get('/cache/info', {
     schema: {
-      response: {
-        200: {
-          type: 'object',
-          properties: {
-            success: { type: 'boolean' },
-            cache: { type: 'object' }
-          }
-        }
-      }
+      tags: ['cache'],
+      summary: '获取缓存信息',
+      description: '查看当前缓存状态和统计信息'
     }
   }, async (request, reply) => {
     try {
@@ -328,7 +358,13 @@ async function weatherRoutes(fastify, options) {
   });
 
   // API使用示例接口 (帮助文档)
-  fastify.get('/examples', async (request, reply) => {
+  fastify.get('/examples', {
+    schema: {
+      tags: ['weather'],
+      summary: 'API使用示例',
+      description: '获取API使用示例和参数说明'
+    }
+  }, async (request, reply) => {
     const baseUrl = `${request.protocol}://${request.hostname}${request.url.replace('/examples', '')}`;
     
     return {
@@ -337,25 +373,26 @@ async function weatherRoutes(fastify, options) {
       examples: {
         basic: {
           description: '基础天气查询 (北京)',
-          url: `${baseUrl}/onecall?lat=39.9042&lon=116.4074`
+          url: `${baseUrl}/onecall?lat=39.9042&lon=116.4074&appid=your_app_id`
         },
         metric: {
           description: '公制单位 + 中文 (上海)',
-          url: `${baseUrl}/onecall?lat=31.2304&lon=121.4737&units=metric&lang=zh_cn`
+          url: `${baseUrl}/onecall?lat=31.2304&lon=121.4737&units=metric&lang=zh_cn&appid=your_app_id`
         },
         exclude: {
           description: '排除分钟级和小时级数据 (纽约)',
-          url: `${baseUrl}/onecall?lat=40.7128&lon=-74.0060&exclude=minutely,hourly&units=imperial`
+          url: `${baseUrl}/onecall?lat=40.7128&lon=-74.0060&exclude=minutely,hourly&units=imperial&appid=your_app_id`
         },
         minimal: {
           description: '只获取当前天气 (伦敦)',
-          url: `${baseUrl}/onecall?lat=51.5074&lon=-0.1278&exclude=minutely,hourly,daily,alerts&units=metric`
+          url: `${baseUrl}/onecall?lat=51.5074&lon=-0.1278&exclude=minutely,hourly,daily,alerts&units=metric&appid=your_app_id`
         }
       },
       parameters: {
         required: {
           lat: 'number (-90 到 90)',
-          lon: 'number (-180 到 180)'
+          lon: 'number (-180 到 180)',
+          appid: 'string (接口鉴权密钥)'
         },
         optional: {
           exclude: 'string (current,minutely,hourly,daily,alerts)',

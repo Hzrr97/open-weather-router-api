@@ -1,9 +1,21 @@
 'use strict';
 
+// 初始化日志管理器
+const logManager = require('./utils/logManager');
+
 const fastify = require('fastify')({
-  logger: {
+  logger: process.env.NODE_ENV === 'development' ? {
     level: process.env.LOG_LEVEL || 'info',
-    prettyPrint: process.env.NODE_ENV === 'development'
+    transport: {
+      target: 'pino-pretty',
+      options: {
+        colorize: true,
+        translateTime: 'HH:MM:ss Z',
+        ignore: 'pid,hostname'
+      }
+    }
+  } : {
+    level: process.env.LOG_LEVEL || 'info'
   },
   trustProxy: true,
   keepAliveTimeout: parseInt(process.env.KEEPALIVE_TIMEOUT) || 30000,
@@ -12,19 +24,95 @@ const fastify = require('fastify')({
 // 加载环境变量
 require('dotenv').config();
 
+// 添加日志钩子 - 将重要日志写入文件
+fastify.addHook('onRequest', async (request, reply) => {
+  const logData = {
+    method: request.method,
+    url: request.url,
+    ip: request.ip,
+    userAgent: request.headers['user-agent'],
+    timestamp: new Date().toISOString()
+  };
+  
+  // 记录请求到文件
+  logManager.write('info', 'incoming request', logData);
+});
+
+fastify.addHook('onResponse', async (request, reply) => {
+  const logData = {
+    method: request.method,
+    url: request.url,
+    statusCode: reply.statusCode,
+    responseTime: reply.getResponseTime(),
+    ip: request.ip,
+    timestamp: new Date().toISOString()
+  };
+  
+  // 记录响应到文件
+  logManager.write('info', 'request completed', logData);
+});
+
+// 重写错误日志，同时写入文件
+const originalError = fastify.log.error;
+fastify.log.error = function(obj, msg, ...args) {
+  // 写入文件
+  logManager.write('error', msg || 'Error occurred', typeof obj === 'object' ? obj : { error: obj });
+  // 调用原始方法
+  return originalError.call(this, obj, msg, ...args);
+};
+
 // 全局错误处理
 process.on('uncaughtException', (err) => {
   fastify.log.error('Uncaught Exception:', err);
+  logManager.write('error', 'Uncaught Exception', { error: err.message, stack: err.stack });
   process.exit(1);
 });
 
 process.on('unhandledRejection', (reason, promise) => {
   fastify.log.error('Unhandled Rejection at:', promise, 'reason:', reason);
+  logManager.write('error', 'Unhandled Rejection', { reason: reason, promise: promise });
   process.exit(1);
 });
 
 // 注册插件
 async function registerPlugins() {
+  // Swagger API 文档 (仅在开发环境或明确启用时)
+  if (process.env.NODE_ENV === 'development' || process.env.ENABLE_SWAGGER === 'true') {
+    await fastify.register(require('@fastify/swagger'), {
+      swagger: {
+        info: {
+          title: 'OpenWeather API Router',
+          description: '高性能的OpenWeatherMap API代理服务，支持多账号负载均衡和智能请求限制管理',
+          version: '1.0.0',
+          contact: {
+            name: 'API Support',
+            email: 'support@example.com'
+          }
+        },
+        host: process.env.HOST || 'localhost:3000',
+        schemes: ['http', 'https'],
+        consumes: ['application/json'],
+        produces: ['application/json'],
+        tags: [
+          { name: 'weather', description: '天气数据相关接口' },
+          { name: 'health', description: '健康检查接口' },
+          { name: 'stats', description: '统计信息接口' },
+          { name: 'cache', description: '缓存管理接口' }
+        ]
+      }
+    });
+
+    await fastify.register(require('@fastify/swagger-ui'), {
+      routePrefix: '/docs',
+      uiConfig: {
+        docExpansion: 'list',
+        deepLinking: false
+      },
+      staticCSP: true,
+      transformSpecificationClone: true
+    });
+  }
+
   // CORS支持
   await fastify.register(require('@fastify/cors'), {
     origin: process.env.CORS_ORIGIN || true,
@@ -127,13 +215,18 @@ fastify.setNotFoundHandler((request, reply) => {
 // 优雅关闭处理
 async function gracefulShutdown(signal) {
   fastify.log.info(`收到 ${signal} 信号，开始优雅关闭...`);
+  logManager.write('info', `收到 ${signal} 信号，开始优雅关闭...`, { signal });
   
   try {
+    // 关闭日志管理器
+    logManager.close();
+    
     await fastify.close();
     fastify.log.info('✅ 服务器已安全关闭');
     process.exit(0);
   } catch (err) {
     fastify.log.error('❌ 关闭服务器时出错:', err);
+    logManager.write('error', '关闭服务器时出错', { error: err.message });
     process.exit(1);
   }
 }
@@ -183,6 +276,15 @@ async function start() {
     console.log(`🏥 健康检查: http://${host}:${port}/health`);
     console.log(`📊 统计信息: http://${host}:${port}/stats`);
     console.log(`🌍 天气接口: http://${host}:${port}/data/3.0/onecall`);
+    console.log(`📝 日志管理: http://${host}:${port}/logs/stats`);
+    console.log(`📋 API文档: http://${host}:${port}/docs`);
+    
+    // 显示日志配置信息
+    const logStats = logManager.getLogStats();
+    console.log(`📄 当前日志文件: ${logStats.currentLogFile}`);
+    console.log(`🗂️ 日志文件数量: ${logStats.totalFiles}`);
+    console.log(`💾 日志总大小: ${logStats.totalSizeFormatted}`);
+    console.log(`🗑️ 日志保留天数: ${logStats.retentionDays}天`);
     console.log('🌤️ ===============================================');
     
     fastify.log.info({

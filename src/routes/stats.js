@@ -17,20 +17,9 @@ async function statsRoutes(fastify, options) {
   // 基础统计信息
   fastify.get('/stats', {
     schema: {
-      response: {
-        200: {
-          type: 'object',
-          properties: {
-            success: { type: 'boolean' },
-            timestamp: { type: 'string' },
-            keys: { type: 'array' },
-            performance: { type: 'object' },
-            cache: { type: 'object' },
-            system: { type: 'object' },
-            cluster: { type: 'object' }
-          }
-        }
-      }
+      tags: ['stats'],
+      summary: '基础统计信息',
+      description: '获取API使用的基础统计数据'
     }
   }, async (request, reply) => {
     try {
@@ -110,22 +99,9 @@ async function statsRoutes(fastify, options) {
   // 详细统计信息
   fastify.get('/stats/detailed', {
     schema: {
-      response: {
-        200: {
-          type: 'object',
-          properties: {
-            success: { type: 'boolean' },
-            timestamp: { type: 'string' },
-            overview: { type: 'object' },
-            apiKeys: { type: 'object' },
-            cache: { type: 'object' },
-            performance: { type: 'object' },
-            system: { type: 'object' },
-            config: { type: 'object' },
-            cluster: { type: 'object' }
-          }
-        }
-      }
+      tags: ['stats'],
+      summary: '详细统计信息',
+      description: '获取完整的系统统计和性能数据'
     }
   }, async (request, reply) => {
     try {
@@ -189,19 +165,9 @@ async function statsRoutes(fastify, options) {
   // API密钥统计
   fastify.get('/stats/keys', {
     schema: {
-      response: {
-        200: {
-          type: 'object',
-          properties: {
-            success: { type: 'boolean' },
-            timestamp: { type: 'string' },
-            summary: { type: 'object' },
-            keys: { type: 'array' },
-            hourlyUsage: { type: 'array' },
-            cluster: { type: 'object' }
-          }
-        }
-      }
+      tags: ['stats'],
+      summary: 'API密钥统计',
+      description: '获取API密钥使用情况和统计信息'
     }
   }, async (request, reply) => {
     try {
@@ -246,16 +212,9 @@ async function statsRoutes(fastify, options) {
   // 缓存统计
   fastify.get('/stats/cache', {
     schema: {
-      response: {
-        200: {
-          type: 'object',
-          properties: {
-            success: { type: 'boolean' },
-            timestamp: { type: 'string' },
-            cache: { type: 'object' }
-          }
-        }
-      }
+      tags: ['stats'],
+      summary: '缓存统计',
+      description: '获取缓存使用情况和性能数据'
     }
   }, async (request, reply) => {
     try {
@@ -297,17 +256,9 @@ async function statsRoutes(fastify, options) {
   // 性能统计
   fastify.get('/stats/performance', {
     schema: {
-      response: {
-        200: {
-          type: 'object',
-          properties: {
-            success: { type: 'boolean' },
-            timestamp: { type: 'string' },
-            performance: { type: 'object' },
-            trends: { type: 'object' }
-          }
-        }
-      }
+      tags: ['stats'],
+      summary: '性能统计',
+      description: '获取API性能指标和趋势数据'
     }
   }, async (request, reply) => {
     try {
@@ -364,16 +315,9 @@ async function statsRoutes(fastify, options) {
   // 重置统计信息 (管理功能)
   fastify.post('/stats/reset', {
     schema: {
-      response: {
-        200: {
-          type: 'object',
-          properties: {
-            success: { type: 'boolean' },
-            message: { type: 'string' },
-            timestamp: { type: 'string' }
-          }
-        }
-      }
+      tags: ['stats'],
+      summary: '重置统计信息',
+      description: '重置所有统计数据（管理功能）'
     }
   }, async (request, reply) => {
     try {
@@ -404,6 +348,9 @@ async function statsRoutes(fastify, options) {
   // 导出统计数据 (CSV格式)
   fastify.get('/stats/export', {
     schema: {
+      tags: ['stats'],
+      summary: '导出统计数据',
+      description: '导出统计数据为JSON或CSV格式',
       querystring: {
         type: 'object',
         properties: {

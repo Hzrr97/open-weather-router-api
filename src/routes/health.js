@@ -17,30 +17,9 @@ async function healthRoutes(fastify, options) {
   // 基础健康检查
   fastify.get('/health', {
     schema: {
-      response: {
-        200: {
-          type: 'object',
-          properties: {
-            status: { type: 'string' },
-            timestamp: { type: 'string' },
-            uptime: { type: 'number' },
-            version: { type: 'string' },
-            apiKeys: { type: 'object' },
-            cache: { type: 'object' },
-            requests: { type: 'object' },
-            system: { type: 'object' },
-            cluster: { type: 'object' }
-          }
-        },
-        503: {
-          type: 'object',
-          properties: {
-            status: { type: 'string' },
-            error: { type: 'string' },
-            timestamp: { type: 'string' }
-          }
-        }
-      }
+      tags: ['health'],
+      summary: '基础健康检查',
+      description: '检查服务整体健康状态'
     }
   }, async (request, reply) => {
     try {
@@ -130,19 +109,9 @@ async function healthRoutes(fastify, options) {
   // 详细健康检查
   fastify.get('/health/detailed', {
     schema: {
-      response: {
-        200: {
-          type: 'object',
-          properties: {
-            status: { type: 'string' },
-            timestamp: { type: 'string' },
-            checks: { type: 'object' },
-            stats: { type: 'object' },
-            environment: { type: 'object' },
-            cluster: { type: 'object' }
-          }
-        }
-      }
+      tags: ['health'],
+      summary: '详细健康检查',
+      description: '获取详细的健康状态和系统检查结果'
     }
   }, async (request, reply) => {
     try {
@@ -244,23 +213,9 @@ async function healthRoutes(fastify, options) {
   // 就绪检查 (Readiness Probe)
   fastify.get('/ready', {
     schema: {
-      response: {
-        200: {
-          type: 'object',
-          properties: {
-            ready: { type: 'boolean' },
-            timestamp: { type: 'string' }
-          }
-        },
-        503: {
-          type: 'object',
-          properties: {
-            ready: { type: 'boolean' },
-            error: { type: 'string' },
-            timestamp: { type: 'string' }
-          }
-        }
-      }
+      tags: ['health'],
+      summary: '就绪检查',
+      description: '检查服务是否准备好接受请求'
     }
   }, async (request, reply) => {
     try {
@@ -294,16 +249,9 @@ async function healthRoutes(fastify, options) {
   // 存活检查 (Liveness Probe)
   fastify.get('/live', {
     schema: {
-      response: {
-        200: {
-          type: 'object',
-          properties: {
-            alive: { type: 'boolean' },
-            timestamp: { type: 'string' },
-            uptime: { type: 'number' }
-          }
-        }
-      }
+      tags: ['health'],
+      summary: '存活检查',
+      description: '检查服务进程是否正在运行'
     }
   }, async (request, reply) => {
     // 简单的存活检查，只要进程在运行就返回true
@@ -319,17 +267,9 @@ async function healthRoutes(fastify, options) {
   // 启动时间信息
   fastify.get('/uptime', {
     schema: {
-      response: {
-        200: {
-          type: 'object',
-          properties: {
-            uptime: { type: 'string' },
-            startTime: { type: 'string' },
-            processUptime: { type: 'number' },
-            systemUptime: { type: 'number' }
-          }
-        }
-      }
+      tags: ['health'],
+      summary: '运行时间信息',
+      description: '获取服务运行时间和启动信息'
     }
   }, async (request, reply) => {
     const processUptime = process.uptime();
@@ -357,18 +297,9 @@ async function healthRoutes(fastify, options) {
   // 版本信息
   fastify.get('/version', {
     schema: {
-      response: {
-        200: {
-          type: 'object',
-          properties: {
-            name: { type: 'string' },
-            version: { type: 'string' },
-            description: { type: 'string' },
-            nodeVersion: { type: 'string' },
-            dependencies: { type: 'object' }
-          }
-        }
-      }
+      tags: ['health'],
+      summary: '版本信息',
+      description: '获取应用版本和依赖信息'
     }
   }, async (request, reply) => {
     const packageJson = require('../../package.json');
@@ -384,6 +315,87 @@ async function healthRoutes(fastify, options) {
         'node-cache': packageJson.dependencies['node-cache']
       }
     };
+  });
+
+  // 日志管理接口
+  fastify.get('/logs/stats', {
+    schema: {
+      tags: ['health'],
+      summary: '日志统计信息',
+      description: '获取日志文件统计信息和状态'
+    }
+  }, async (request, reply) => {
+    try {
+      const logManager = require('../utils/logManager');
+      const stats = logManager.getLogStats();
+      
+      return {
+        success: true,
+        timestamp: new Date().toISOString(),
+        logStats: stats
+      };
+    } catch (error) {
+      fastify.log.error({ error: error.message }, 'Failed to get log stats');
+      return reply.status(500).send({
+        success: false,
+        error: error.message,
+        timestamp: new Date().toISOString()
+      });
+    }
+  });
+
+  // 手动清理日志
+  fastify.post('/logs/cleanup', {
+    schema: {
+      tags: ['health'],
+      summary: '手动清理过期日志',
+      description: '立即清理超过保留期限的日志文件'
+    }
+  }, async (request, reply) => {
+    try {
+      const logManager = require('../utils/logManager');
+      logManager.manualCleanup();
+      
+      return {
+        success: true,
+        message: '日志清理已触发',
+        timestamp: new Date().toISOString()
+      };
+    } catch (error) {
+      fastify.log.error({ error: error.message }, 'Failed to cleanup logs');
+      return reply.status(500).send({
+        success: false,
+        error: error.message,
+        timestamp: new Date().toISOString()
+      });
+    }
+  });
+
+  // 手动轮转日志
+  fastify.post('/logs/rotate', {
+    schema: {
+      tags: ['health'],
+      summary: '手动轮转日志',
+      description: '立即检查并轮转日志文件'
+    }
+  }, async (request, reply) => {
+    try {
+      const logManager = require('../utils/logManager');
+      logManager.manualRotation();
+      
+      return {
+        success: true,
+        message: '日志轮转已触发',
+        timestamp: new Date().toISOString()
+      };
+    } catch (error) {
+      fastify.log.error({ error: error.message }, 'Failed to rotate logs');
+      return reply.status(500).send({
+        success: false,
+        error: error.message,
+        timestamp: new Date().toISOString()
+      });
+    }
   });
 
   // 钩子：记录健康检查日志

@@ -1,199 +1,211 @@
 'use strict';
 
-const { test, beforeAll, afterAll, expect } = require('@jest/globals');
+const { describe, it, beforeEach, afterEach, before, after } = require('mocha');
+const { expect } = require('chai');
 
-// Mock环境变量
-process.env.OPENWEATHER_API_KEYS = 'test_key_1,test_key_2';
-process.env.REDIS_URL = 'redis://localhost:6379';
-process.env.API_DAILY_LIMIT = '2000'; // 测试环境每日限制
-
-describe('Redis Key过期逻辑测试', () => {
-  let ClusterApiKeyManager;
+describe('Redis过期时间测试', () => {
   let manager;
+  const ApiKeyManager = require('../src/services/ApiKeyManager');
 
-  beforeAll(() => {
-    // 动态加载，避免Redis连接问题
-    try {
-      ClusterApiKeyManager = require('../src/services/ClusterApiKeyManager');
-    } catch (error) {
-      console.warn('ClusterApiKeyManager加载失败，跳过Redis测试:', error.message);
-    }
+  before(async () => {
+    // 设置测试环境变量
+    process.env.OPENWEATHER_API_KEYS = 'test_key_1,test_key_2,test_key_3';
+    process.env.API_DAILY_LIMIT = '10';
+    process.env.REDIS_URL = process.env.REDIS_URL || 'redis://localhost:6379';
+    process.env.REDIS_DB = '1'; // 使用不同的数据库避免冲突
   });
 
-  afterAll(async () => {
+  beforeEach(async () => {
+    manager = new ApiKeyManager();
+    // 等待Redis连接
+    await new Promise(resolve => setTimeout(resolve, 1000));
+  });
+
+  afterEach(async () => {
     if (manager) {
+      await manager.resetAllUsage();
       manager.destroy();
+      manager = null;
     }
   });
 
-  test('getSecondsUntilMidnight应该返回合理的秒数', () => {
-    if (!ClusterApiKeyManager) {
-      console.log('跳过Redis测试 - ClusterApiKeyManager未加载');
-      return;
-    }
-
-    manager = new ClusterApiKeyManager();
-    const seconds = manager.getSecondsUntilMidnight();
-    
-    // 应该在0到86400秒之间（24小时）
-    expect(seconds).toBeGreaterThan(0);
-    expect(seconds).toBeLessThanOrEqual(86400);
-    
-    console.log(`当前时间: ${new Date()}`);
-    console.log(`到明天0点还有: ${seconds}秒 (${Math.floor(seconds/3600)}小时${Math.floor((seconds%3600)/60)}分钟)`);
-  });
-
-  test('getTodayString应该返回正确的日期格式', () => {
-    if (!ClusterApiKeyManager) {
-      console.log('跳过Redis测试 - ClusterApiKeyManager未加载');
-      return;
-    }
-
-    manager = new ClusterApiKeyManager();
-    const today = manager.getTodayString();
-    
-    // 应该是YYYY-MM-DD格式
-    expect(today).toMatch(/^\d{4}-\d{2}-\d{2}$/);
-    
-    // 应该是今天的日期
-    const expectedToday = new Date().toISOString().split('T')[0];
-    expect(today).toBe(expectedToday);
-    
-    console.log(`今日日期字符串: ${today}`);
-  });
-
-  test('计算不同时间点到明天0点的秒数', () => {
-    if (!ClusterApiKeyManager) {
-      console.log('跳过Redis测试 - ClusterApiKeyManager未加载');
-      return;
-    }
-
-    manager = new ClusterApiKeyManager();
-
-    // 模拟不同时间点
-    const testCases = [
-      { hour: 0, minute: 0 },   // 刚过0点
-      { hour: 12, minute: 0 },  // 中午
-      { hour: 23, minute: 59 }, // 临近0点
-    ];
-
-    testCases.forEach(({ hour, minute }) => {
-      // 创建测试时间
-      const testTime = new Date();
-      testTime.setHours(hour, minute, 0, 0);
-      
-      // 计算到明天0点的秒数
-      const tomorrow = new Date(testTime);
-      tomorrow.setDate(tomorrow.getDate() + 1);
-      tomorrow.setHours(0, 0, 0, 0);
-      const expectedSeconds = Math.floor((tomorrow - testTime) / 1000);
-      
-      console.log(`时间 ${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')} 到明天0点: ${expectedSeconds}秒`);
-      
-      // 验证计算逻辑
-      if (hour === 0 && minute === 0) {
-        expect(expectedSeconds).toBe(86400); // 整整24小时
-      } else if (hour === 23 && minute === 59) {
-        expect(expectedSeconds).toBe(60); // 1分钟
-      }
-    });
-  });
-
-  test('Redis key命名规范检查', () => {
-    if (!ClusterApiKeyManager) {
-      console.log('跳过Redis测试 - ClusterApiKeyManager未加载');
-      return;
-    }
-
-    manager = new ClusterApiKeyManager();
-    const today = manager.getTodayString();
+  it('应该正确设置Redis键的过期时间', async () => {
     const keyId = 'key_1';
     
-    const expectedUsageKey = `api_usage:${keyId}:${today}`;
-    const expectedTimeKey = `api_times:${keyId}:${today}`;
+    // 记录使用
+    await manager.recordUsage(keyId);
     
-    console.log(`预期的使用统计key: ${expectedUsageKey}`);
-    console.log(`预期的时间记录key: ${expectedTimeKey}`);
+    // 检查键是否存在
+    const usage = await manager.getKeyUsage(keyId);
+    expect(usage).to.equal(1);
     
-    // 验证key格式
-    expect(expectedUsageKey).toMatch(/^api_usage:key_\d+:\d{4}-\d{2}-\d{2}$/);
-    expect(expectedTimeKey).toMatch(/^api_times:key_\d+:\d{4}-\d{2}-\d{2}$/);
+    // 检查TTL (应该小于等于48小时)
+    const today = manager.getTodayString();
+    const usageKey = `usage:${keyId}:${today}`;
+    const timeKey = `times:${keyId}:${today}`;
+    
+    if (manager.redis && manager.redisConnected) {
+      const usageTTL = await manager.redis.ttl(usageKey);
+      const timeTTL = await manager.redis.ttl(timeKey);
+      
+      expect(usageTTL).to.be.greaterThan(0);
+      expect(usageTTL).to.be.lessThanOrEqual(48 * 60 * 60);
+      expect(timeTTL).to.be.greaterThan(0);
+      expect(timeTTL).to.be.lessThanOrEqual(48 * 60 * 60);
+    }
   });
 
-  test('边界情况：23:59:59的过期时间计算', () => {
-    if (!ClusterApiKeyManager) {
-      console.log('跳过Redis测试 - ClusterApiKeyManager未加载');
-      return;
+  it('应该在48小时后自动清理过期数据', async () => {
+    const keyId = 'key_2';
+    
+    // 模拟过期键
+    const yesterday = new Date();
+    yesterday.setDate(yesterday.getDate() - 1);
+    const yesterdayString = yesterday.toISOString().split('T')[0];
+    
+    if (manager.redis && manager.redisConnected) {
+      const usageKey = `usage:${keyId}:${yesterdayString}`;
+      const timeKey = `times:${keyId}:${yesterdayString}`;
+      
+      // 手动设置过期键
+      await manager.redis.set(usageKey, '5');
+      await manager.redis.lpush(timeKey, Date.now());
+      await manager.redis.expire(usageKey, 1); // 1秒后过期
+      await manager.redis.expire(timeKey, 1);
+      
+      // 等待过期
+      await new Promise(resolve => setTimeout(resolve, 2000));
+      
+      // 检查键是否已过期
+      const exists1 = await manager.redis.exists(usageKey);
+      const exists2 = await manager.redis.exists(timeKey);
+      
+      expect(exists1).to.equal(0);
+      expect(exists2).to.equal(0);
     }
+  });
 
-    manager = new ClusterApiKeyManager();
+  it('应该正确清理非当天的使用记录', async () => {
+    if (manager.redis && manager.redisConnected) {
+      // 创建一些测试数据
+      const today = manager.getTodayString();
+      const yesterday = new Date();
+      yesterday.setDate(yesterday.getDate() - 1);
+      const yesterdayString = yesterday.toISOString().split('T')[0];
+      
+      // 设置今天和昨天的数据
+      await manager.redis.set(`usage:key_1:${today}`, '3');
+      await manager.redis.set(`usage:key_1:${yesterdayString}`, '5');
+      await manager.redis.lpush(`times:key_1:${today}`, Date.now());
+      await manager.redis.lpush(`times:key_1:${yesterdayString}`, Date.now() - 86400000);
+      
+      // 执行清理
+      await manager.cleanupOldUsage();
+      
+      // 检查结果
+      const todayExists = await manager.redis.exists(`usage:key_1:${today}`);
+      const yesterdayExists = await manager.redis.exists(`usage:key_1:${yesterdayString}`);
+      
+      expect(todayExists).to.equal(1); // 今天的数据应该保留
+      expect(yesterdayExists).to.equal(0); // 昨天的数据应该被清理
+    }
+  });
+
+  it('应该支持获取剩余配额', async () => {
+    // 使用一些配额
+    await manager.recordUsage('key_1');
+    await manager.recordUsage('key_1');
+    await manager.recordUsage('key_2');
     
-    // 模拟23:59:59的情况
-    const almostMidnight = new Date();
-    almostMidnight.setHours(23, 59, 59, 999);
+    const remainingQuota = await manager.getRemainingQuota();
     
-    const tomorrow = new Date(almostMidnight);
-    tomorrow.setDate(tomorrow.getDate() + 1);
-    tomorrow.setHours(0, 0, 0, 0);
+    // 总配额 = 3个key * 10次/天 = 30
+    // 已使用 = 3次
+    // 剩余 = 27次
+    expect(remainingQuota).to.equal(27);
+  });
+
+  it('应该支持重置指定密钥的使用计数', async () => {
+    const keyId = 'key_3';
     
-    const secondsLeft = Math.floor((tomorrow - almostMidnight) / 1000);
+    // 记录一些使用
+    await manager.recordUsage(keyId);
+    await manager.recordUsage(keyId);
     
-    console.log(`23:59:59时到明天0点还有: ${secondsLeft}秒`);
+    let usage = await manager.getKeyUsage(keyId);
+    expect(usage).to.equal(2);
     
-    // 应该只有1秒或更少
-    expect(secondsLeft).toBeLessThanOrEqual(1);
-    expect(secondsLeft).toBeGreaterThanOrEqual(0);
+    // 重置
+    await manager.resetKeyUsage(keyId);
+    
+    usage = await manager.getKeyUsage(keyId);
+    expect(usage).to.equal(0);
+  });
+
+  it('应该在连接断开时优雅降级', async () => {
+    // 断开Redis连接
+    if (manager.redis) {
+      manager.redis.disconnect();
+      manager.redisConnected = false;
+    }
+    
+    // 尝试获取密钥应该抛出错误
+    try {
+      await manager.getAvailableKey();
+      expect.fail('应该抛出Redis连接错误');
+    } catch (error) {
+      expect(error.message).to.include('Redis连接不可用');
+    }
+    
+    // 记录使用应该静默失败
+    await manager.recordUsage('key_1'); // 不应该抛出错误
+    
+    // 获取统计应该返回默认值
+    const stats = await manager.getStats();
+    expect(stats.error).to.include('Redis连接不可用');
   });
 });
 
-// 集成测试 - 需要真实Redis连接
-describe('Redis集成测试 (需要Redis服务)', () => {
+// 性能测试
+describe('Redis性能测试', () => {
   let manager;
+  const ApiKeyManager = require('../src/services/ApiKeyManager');
 
-  beforeAll(() => {
-    try {
-      const ClusterApiKeyManager = require('../src/services/ClusterApiKeyManager');
-      manager = new ClusterApiKeyManager();
-    } catch (error) {
-      console.warn('跳过Redis集成测试:', error.message);
-    }
+  before(() => {
+    process.env.OPENWEATHER_API_KEYS = 'perf_key_1,perf_key_2';
+    process.env.API_DAILY_LIMIT = '1000';
+    process.env.REDIS_DB = '2';
   });
 
-  afterAll(async () => {
+  beforeEach(async () => {
+    manager = new ApiKeyManager();
+    await new Promise(resolve => setTimeout(resolve, 500));
+  });
+
+  afterEach(async () => {
     if (manager) {
-      // 清理测试数据
-      if (manager.redis && manager.redisConnected) {
-        await manager.redis.del('api_usage:test_key:2024-01-01');
-        await manager.redis.del('api_times:test_key:2024-01-01');
-      }
+      await manager.resetAllUsage();
       manager.destroy();
     }
   });
 
-  test('实际Redis key过期设置', async () => {
-    if (!manager || !manager.redisConnected) {
-      console.log('跳过Redis集成测试 - Redis未连接');
-      return;
-    }
-
-    const testKey = 'test_key';
+  it('应该能够处理大量并发请求', async () => {
+    const concurrency = 100;
+    const promises = [];
     
-    try {
-      // 记录使用
-      await manager.recordUsage(testKey);
-      
-      // 检查key的TTL
-      const usageKey = `api_usage:${testKey}:${manager.getTodayString()}`;
-      const ttl = await manager.redis.ttl(usageKey);
-      
-      console.log(`Redis key TTL: ${ttl}秒`);
-      
-      // TTL应该大于0且小于等于86400
-      expect(ttl).toBeGreaterThan(0);
-      expect(ttl).toBeLessThanOrEqual(86400);
-      
-    } catch (error) {
-      console.log('Redis集成测试失败:', error.message);
+    for (let i = 0; i < concurrency; i++) {
+      promises.push(manager.recordUsage('perf_key_1'));
     }
-  }, 10000); // 10秒超时
+    
+    const startTime = Date.now();
+    await Promise.all(promises);
+    const endTime = Date.now();
+    
+    const usage = await manager.getKeyUsage('perf_key_1');
+    expect(usage).to.equal(concurrency);
+    
+    const duration = endTime - startTime;
+    console.log(`并发写入 ${concurrency} 次耗时: ${duration}ms`);
+    expect(duration).to.be.lessThan(5000); // 应该在5秒内完成
+  }).timeout(10000);
 }); 
