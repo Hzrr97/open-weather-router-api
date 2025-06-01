@@ -22,6 +22,13 @@ async function statsRoutes(fastify, options) {
       description: '获取API使用的基础统计数据'
     }
   }, async (request, reply) => {
+    // 添加进程ID日志，用于测试集群模式
+    request.log.info({
+      processId: process.pid,
+      clusterId: process.env.pm_id || 'unknown',
+      workerId: process.env.NODE_APP_INSTANCE || 'unknown'
+    }, `📊 [进程 ${process.pid}] 处理Stats请求 - Cluster ID: ${process.env.pm_id || 'N/A'}`);
+    
     try {
       const weatherService = getWeatherService();
       const stats = await weatherService.getStats();

@@ -158,6 +158,13 @@ async function weatherRoutes(fastify, options) {
   }, async (request, reply) => {
     const startTime = Date.now();
     
+    // 添加进程ID日志，用于测试集群模式
+    request.log.info({
+      processId: process.pid,
+      clusterId: process.env.pm_id || 'unknown',
+      workerId: process.env.NODE_APP_INSTANCE || 'unknown'
+    }, `🔀 [进程 ${process.pid}] 处理请求 - Cluster ID: ${process.env.pm_id || 'N/A'}`);
+    
     try {
       // 验证appid参数
       const { appid, ...weatherParams } = request.query;

@@ -152,7 +152,7 @@ class WeatherService {
   }
 
   /**
-   * 从API获取天气数据 - 支持集群模式
+   * 从API获取天气数据 - 支持集群模式和密钥更换
    */
   async fetchWeatherFromAPI(params, cacheKey) {
     let lastError = null;
@@ -160,50 +160,76 @@ class WeatherService {
     // 重试机制
     for (let attempt = 1; attempt <= this.retryConfig.count; attempt++) {
       try {
-        // 获取可用的API密钥（支持集群模式）
-        const apiKey = await this.apiKeyManager.getAvailableKey();
-        if (!apiKey) {
-          throw new Error('所有API密钥都已达到使用限制');
+        // 获取所有可用的API密钥列表（按优先级排序）
+        const availableKeys = await this.apiKeyManager.getAllAvailableKeys();
+        if (availableKeys.length === 0) {
+          throw new Error('所有API密钥都已达到使用限制或错误次数限制');
         }
         
-        // 构建请求URL
-        const url = this.buildApiUrl(params, apiKey.key);
-        
-        // 发送请求
-        const response = await this.httpClient.get(url);
-        
-        // 记录API密钥使用（支持集群模式）
-        await this.apiKeyManager.recordUsage(apiKey.id);
-        this.stats.apiCalls++;
-        
-        // 缓存结果（仅在启用时）
-        if (this.cacheEnabled && this.cache) {
-          this.cache.set(cacheKey, response.data);
-          this.stats.cacheWrites++;
+        // 尝试每个可用的密钥
+        for (let keyIndex = 0; keyIndex < availableKeys.length; keyIndex++) {
+          const apiKey = availableKeys[keyIndex];
+          
+          try {
+            // 构建请求URL
+            const url = this.buildApiUrl(params, apiKey.key);
+            
+            // 发送请求
+            const response = await this.httpClient.get(url);
+            
+            // 记录API密钥使用（支持集群模式）
+            await this.apiKeyManager.recordUsage(apiKey.id);
+            this.stats.apiCalls++;
+            
+            // 缓存结果（仅在启用时）
+            if (this.cacheEnabled && this.cache) {
+              this.cache.set(cacheKey, response.data);
+              this.stats.cacheWrites++;
+            }
+            
+            // 成功！直接返回API的原始响应数据
+            return response.data;
+            
+          } catch (error) {
+            lastError = error;
+            
+            // 记录密钥错误
+            await this.apiKeyManager.recordError(apiKey.id);
+            
+            console.warn(`🔄 API密钥 ${apiKey.id} 调用失败，尝试下一个密钥 (密钥 ${keyIndex + 1}/${availableKeys.length}, 重试 ${attempt}/${this.retryConfig.count}):`, {
+              error: error.message,
+              status: error.response?.status,
+              keyId: apiKey.id,
+              url: error.config?.url
+            });
+            
+            // 如果不是最后一个密钥，继续尝试下一个
+            if (keyIndex < availableKeys.length - 1) {
+              continue;
+            }
+            
+            // 所有密钥都失败了，跳出密钥循环
+            break;
+          }
         }
-        // 直接返回API的原始响应数据
-        return response.data;
+        
+        // 如果所有密钥都失败了，记录详细错误
+        console.error(`❌ 所有可用密钥都已失败 (重试 ${attempt}/${this.retryConfig.count})`);
         
       } catch (error) {
         lastError = error;
-        
-        // 记录错误日志
-        console.error(`API调用失败 (尝试 ${attempt}/${this.retryConfig.count}):`, {
-          error: error.message,
-          params: params,
-          url: error.config?.url,
-          mode: 'redis'
-        });
-        
-        // 如果不是最后一次尝试，等待重试
-        if (attempt < this.retryConfig.count) {
-          const delay = this.retryConfig.delay * attempt; // 指数退避
-          await this.sleep(delay);
-        }
+        console.error(`获取可用密钥失败 (重试 ${attempt}/${this.retryConfig.count}):`, error.message);
+      }
+      
+      // 如果不是最后一次重试，等待重试
+      if (attempt < this.retryConfig.count) {
+        const delay = this.retryConfig.delay * attempt; // 指数退避
+        console.log(`⏰ 等待 ${delay}ms 后进行第 ${attempt + 1} 次重试...`);
+        await this.sleep(delay);
       }
     }
     
-    // 所有重试都失败了 - 直接抛出原始错误
+    // 所有重试和密钥都失败了 - 直接抛出原始错误
     throw lastError;
   }
 
