@@ -17,7 +17,8 @@ module.exports = {
       env: {
         NODE_ENV: 'development',
         PORT: 3000,
-        LOG_LEVEL: 'debug'
+        LOG_LEVEL: 'debug',
+        HOST: '0.0.0.0'
       },
       // 日志配置
       log_file: './logs/pm2-dev-combined.log',
@@ -56,7 +57,8 @@ module.exports = {
       env: {
         NODE_ENV: 'production',
         PORT: 3000,
-        LOG_LEVEL: 'info'
+        LOG_LEVEL: 'info',
+        HOST: '0.0.0.0'
       },
       // 日志配置
       log_file: './logs/pm2-prod-combined.log',
